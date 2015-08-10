@@ -15,6 +15,8 @@ import org.usb4java.DeviceHandle;
 import org.usb4java.DeviceList;
 import org.usb4java.LibUsb;
 import org.usb4java.LibUsbException;
+import org.usb4java.Transfer;
+import org.usb4java.TransferCallback;
 
 
 /*import javax.usb.UsbClaimException;
@@ -43,16 +45,23 @@ import nom.tam.util.BufferedFile;
  * @author farom
  * 
  */
-public class PlamDriver {
+public class PlamDriver implements TransferCallback{
 	public static final short VENDOR_ID = 0x0547;
 	public static final short PRODUCT_ID = 0x3303;
 	private static final long CTRL_TIMEOUT = 100;
 	private static final int IMG_BYTE_SIZE = 640*480*2;
 	private static final byte BULK_ENDPOINT = (byte) 0x82;
+	private static final double DURATION_COEF = 5923;//7692;//59171.5978836;
+	private static final short IMGCTRL_THIGH = 6;
+	private static final short IMGCTRL_TLOW = 7;
+	
 
 	//private UsbDevice device;
 	private Device device;
 	private DeviceHandle handle;
+	private EventHandlingThread thread;
+	private boolean captureOngoing = false;
+	private int img = 0;
 
 	/**
 	 * 
@@ -60,6 +69,8 @@ public class PlamDriver {
 	public PlamDriver() {
 		Context context = new Context();
 		int result = LibUsb.init(context);
+		thread = new EventHandlingThread();
+		thread.start();
 		if (result != LibUsb.SUCCESS){
 			System.out.println("Unable to initialize libusb: "+ result);
 			return;
@@ -108,6 +119,12 @@ public class PlamDriver {
 		}
 		finally
 		{
+			thread.abort();
+			try {
+				thread.join();
+			} catch (InterruptedException e) {
+				e.printStackTrace();
+			}
 		    LibUsb.close(handle);
 		}
 		//System.out.println("Device found: "+device.);
@@ -213,56 +230,66 @@ public class PlamDriver {
 		sendAndVerifyControl(0x40, 3, 13443, 0x0800, new byte[0]);
 		sendAndVerifyControl(0x40, 9, 768, 0x0000, new byte[0]);
 		sendAndVerifyControl(0x40, 13, 0, 0x0001, new byte[0]);
-		sendAndVerifyControl(0x40, 13, 0, 0x0001, new byte[0]);
+		sendAndVerifyControl(0x40, 13, 0, 0x0001, new byte[0]);		
+		sendAndVerifyControl(0x40, 5, 15, 0x0003, new byte[0]);
+		capture(0,1);
+		
 		sendAndVerifyControl(0x40, 3, 13827, 0x0000, new byte[0]);
 		sendAndVerifyControl(0x40, 3, 10035, 0x0301, new byte[0]);
 
-		try {
-			Thread.sleep(1010); // 100 milliseconds
-		} catch (InterruptedException ex) {
-			Thread.currentThread().interrupt();
+		while(captureOngoing == true){
+			try {
+				Thread.sleep(100);
+			} catch (InterruptedException e) {
+				e.printStackTrace();
+			}
+			System.out.print(".");
 		}
+		System.out.println("init ok");
+		setGain(750);
 		
+		double duration = 10;
+		duration = duration * DURATION_COEF;
+		int duration_int = (int) duration;
+		short duration_high = (short) (duration_int / 4096);
+		short duration_low = (short) (duration_int - duration_high * 4096);
+		sendImgCtrl(IMGCTRL_THIGH, duration_high);
+		capture(1,10);
+		sendImgCtrl(IMGCTRL_TLOW, duration_low);
 		for(int i = 0; i<10; i++){
-			capture(i);
+			while(captureOngoing == true){
+				try {
+					Thread.sleep(100);
+				} catch (InterruptedException e) {
+					e.printStackTrace();
+				}
+				System.out.print(".");
+			}
+			capture(i,10);
 		}
 		
 	}
 	
-	private void capture(int img){
-		ByteBuffer buffer = ByteBuffer.allocateDirect(IMG_BYTE_SIZE);
-		IntBuffer transfered = IntBuffer.allocate(1);
-		int result = LibUsb.bulkTransfer(handle, BULK_ENDPOINT, buffer, transfered, 1500);
-		if (result != LibUsb.SUCCESS) throw new LibUsbException("Bulk transfer failed", result);
-		if (transfered.get(0)!=IMG_BYTE_SIZE) throw new LibUsbException("Bulk transfer incomplete "+transfered.get(0)+"/"+IMG_BYTE_SIZE, result);
-		
-		float[][] data1 = new float[480][640];
-		for(int i = 0; i<480; i++){
-			for(int j = 0; j<640; j++){
-				data1[i][j]=(buffer.get((i*640+(639-j))*2)&0xFF)*256+(buffer.get((i*640+(639-j))*2+1)&0xFF);//i+2*j;//256.f*(data[(i*640+j)*2]&0xFF)+1.f*(data[(i*640+j)*2+1]&0xFF);//+data[(i*640+j)*2+1]&0xFF;
-				
-			}
-		}
-		
+	private void capture(int img, double duration){
 
 		
-		try {
-			Fits f1 = new Fits();
-			f1.addHDU(FitsFactory.HDUFactory(data1));
-			BufferedFile bf1 = new BufferedFile("img"+img+".fits", "rw");
-			f1.write(bf1);
-			bf1.close();
-			f1.close();
-			
-			
-		} catch (FitsException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
-		} catch (IOException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
-		}
-		System.out.println("image captured!");
+		ByteBuffer buffer = ByteBuffer.allocateDirect(IMG_BYTE_SIZE);
+		//IntBuffer transfered = IntBuffer.allocate(1);
+		
+		captureOngoing = true;
+		
+		
+//		try {
+//			Thread.sleep(1000); // 100 milliseconds
+//		} catch (InterruptedException ex) {
+//			Thread.currentThread().interrupt();
+//		}
+		Transfer transfer = LibUsb.allocTransfer();
+		LibUsb.fillBulkTransfer(transfer, handle, BULK_ENDPOINT, buffer, this, null, (long) (duration*1000 + 2000));
+		int result = LibUsb.submitTransfer(transfer);		
+		if (result != LibUsb.SUCCESS) throw new LibUsbException("Unable to submit transfer", result);
+		
+		//System.out.println("image captured!");		
 	}
 
 	private boolean sendAndVerifyControl(int bmRequestType, int bRequest, int wIndex, int wValue, byte[] trueData) {
@@ -301,14 +328,6 @@ public class PlamDriver {
 		}
 	}
 
-	/*private byte[] sendControl(byte bmRequestType, byte bRequest, short wIndex, short wValue, short dataLength)
-			throws UsbDisconnectedException, UsbException {
-		UsbControlIrp irp = device.createUsbControlIrp(bmRequestType, bRequest, wValue, wIndex);
-		byte[] data = new byte[dataLength];
-		irp.setData(data);
-		device.syncSubmit(irp);
-		return irp.getData();
-	}*/
 	
 	private byte[] sendControl(byte bmRequestType, byte bRequest, short wIndex, short wValue, short dataLength) throws LibUsbException {
 		if(bmRequestType >= 0 && dataLength!=0){ // host to device request with undefined data
@@ -330,27 +349,112 @@ public class PlamDriver {
 		}
 	}
 
-	/*@SuppressWarnings("unchecked")
-	private UsbDevice findCamera(UsbHub hub) {
-		for (UsbDevice device : (List<UsbDevice>) hub.getAttachedUsbDevices()) {
-			UsbDeviceDescriptor desc = device.getUsbDeviceDescriptor();
-			if (desc.idVendor() == VENDOR_ID && desc.idProduct() == PRODUCT_ID)
-				return device;
-			if (device.isUsbHub()) {
-				device = findCamera((UsbHub) device);
-				if (device != null)
-					return device;
-			}
-		}
-		return null;
-	}*/
-
+	
 	/**
 	 * @param args
 	 */
 	public static void main(String[] args) {
+		short wi;
+		short wv=0x0444;
+		wi = (short) ((short) ((wv ^ (short)0x33)<<4)|(short)6);
+		System.out.printf("wIndex: %d(0x%04X)\n",(int)wi,(int)wi);
+		System.out.printf("wValue: %d(0x%04X)\n",wv,wv);
 		new PlamDriver();
 
+	}
+	
+	private void sendImgCtrl(short type, short value){
+		short wIndex = (short) ((short) ((value ^ (short)0x33)<<4)|type);
+		System.out.printf("wIndex0 = %04X\n",wIndex);
+		wIndex = (short) (wIndex<<8|((wIndex>>8)&0xFF));
+		System.out.printf("value = %04X wIndex = %04X\n",value,wIndex);
+		sendControl((byte)0x40, (byte)0x3, wIndex, value, (short)0);
+		//sendControl((byte)0x40, (byte)0x3, wIndex, (short)0, (short)0);
+		
+	}
+	
+	private void setGain(int gain){
+		if(gain > 1023 || gain < 0){
+			throw new IllegalArgumentException("The gain must be between 0 and 1023. Current value: " + gain);
+		}
+		sendImgCtrl((short)0x00, (short)gain);
+	}
+	
+	private void setBlack(int level){
+		if(level > 255 || level < 0){
+			throw new IllegalArgumentException("The black level must be between 0 and 255. Current value: " + level);
+		}
+		sendImgCtrl((short)0x01, (short)level);
+	}
+	
+	class EventHandlingThread extends Thread
+	{
+	    /** If thread should abort. */
+	    private volatile boolean abort;
+
+	    /**
+	     * Aborts the event handling thread.
+	     */
+	    public void abort()
+	    {
+	        this.abort = true;
+	    }
+
+	    @Override
+	    public void run()
+	    {
+	        while (!this.abort)
+	        {
+	            int result = LibUsb.handleEventsTimeout(null, 250000);
+	            if (result != LibUsb.SUCCESS)
+	                throw new LibUsbException("Unable to handle events", result);
+	        }
+	    }
+	}
+
+	@Override
+	public void processTransfer(Transfer transfer) {
+		System.out.println(transfer.actualLength() + " bytes received");
+        
+        captureOngoing = false;
+        
+        if (transfer.actualLength()!=IMG_BYTE_SIZE) {
+        	System.out.println("Bulk transfer incomplete "+transfer.actualLength()+"/"+IMG_BYTE_SIZE);
+        	return;
+        	//throw new LibUsbException("Bulk transfer incomplete "+transfer.actualLength()+"/"+IMG_BYTE_SIZE, transfer.status());
+        }
+		ByteBuffer buffer = transfer.buffer();
+		float[][] data1 = new float[480][640];
+		for(int i = 0; i<480; i++){
+			for(int j = 0; j<640; j++){
+				data1[i][j]=(buffer.get((i*640+(639-j))*2)&0xFF)*256+(buffer.get((i*640+(639-j))*2+1)&0xFF);//i+2*j;//256.f*(data[(i*640+j)*2]&0xFF)+1.f*(data[(i*640+j)*2+1]&0xFF);//+data[(i*640+j)*2+1]&0xFF;
+				
+			}
+		}
+		
+		LibUsb.freeTransfer(transfer);
+		
+		
+		try {
+			Fits f1 = new Fits();
+			f1.addHDU(FitsFactory.HDUFactory(data1));
+			BufferedFile bf1 = new BufferedFile("img"+img+".fits", "rw");
+			f1.write(bf1);
+			bf1.close();
+			f1.close();
+			img++;
+			
+			
+			
+		} catch (FitsException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		} catch (IOException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+		System.out.println("image captured!");
+		
 	}
 
 }
