@@ -532,7 +532,7 @@ public class PlamDriver implements TransferCallback {
     			BufferedFile bf1 = new BufferedFile("img1.fits", "rw");
     			f1.write(bf1);
     			bf1.close();
-    			f1.close();
+    			//f1.close();
     			System.out.println("image saved!");   			
     			
     		} catch (FitsException e) {
