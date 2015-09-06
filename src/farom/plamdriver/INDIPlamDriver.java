@@ -14,6 +14,7 @@ import java.util.TimerTask;
 import org.indilib.i4j.Constants.PropertyStates;
 import org.indilib.i4j.INDIException;
 import org.indilib.i4j.driver.INDIDriver;
+import org.indilib.i4j.driver.INDINumberElement;
 import org.indilib.i4j.driver.INDINumberElementAndValue;
 import org.indilib.i4j.driver.INDINumberProperty;
 import org.indilib.i4j.driver.annotation.InjectElement;
@@ -75,17 +76,17 @@ public class INDIPlamDriver extends INDICCDDriver implements INDIConnectionHandl
 	private static final short IMGCTRL_TLOW = 7;
 	
 
-    /*@InjectProperty(name = "CCD_GAIN", label = "Gain", group = INDIDriver.GROUP_MAIN_CONTROL)
+    @InjectProperty(name = "CCD_GAIN", label = "Gain", group = INDIDriver.GROUP_MAIN_CONTROL)
     private INDINumberProperty gainP;
     
-    @InjectElement(name = "CCD_GAIN", label = "Level", numberValue = 750, maximum = 1023, minimum = 0, numberFormat = "%4.0f")
-    private INDINumberProperty gainE;
+    @InjectElement(name = "GAIN", label = "Level", numberValue = 750, maximum = 1023, minimum = 0, numberFormat = "%4.0f")
+    private INDINumberElement gainE;
     
     @InjectProperty(name = "CCD_BLACK", label = "Black", group = INDIDriver.GROUP_MAIN_CONTROL)
     private INDINumberProperty blackP;
     
-    @InjectElement(name = "CCD_BLACK", label = "Level", numberValue = 0, maximum = 255, minimum = 0, numberFormat = "%3.0f")
-    private INDINumberProperty blackE;*/
+    @InjectElement(name = "BLACK", label = "Level", numberValue = 0, maximum = 255, minimum = 0, numberFormat = "%3.0f")
+    private INDINumberElement blackE;
 	
 	private Device device;
 	private DeviceHandle handle;
@@ -113,29 +114,29 @@ public class INDIPlamDriver extends INDICCDDriver implements INDIConnectionHandl
 			e.printStackTrace();
 			LOG.error("comme prévu",e);
 		}
-//		gainP.setEventHandler(new NumberEvent() {
-//            @Override
-//            public void processNewValue(Date date, INDINumberElementAndValue[] elementsAndValues) {
-//                try{
-//                	setGain(elementsAndValues[0].getValue().intValue());
-//                }catch(IllegalArgumentException e){
-//                	gainP.setState(PropertyStates.ALERT);
-//                	updateProperty(gainP, e.getMessage());
-//                }catch(LibUsbException e){
-//                	gainP.setState(PropertyStates.ALERT);
-//                	updateProperty(gainP, e.getMessage());
-//                }
-//                gainE.setValues(elementsAndValues);
-//                gainP.setState(PropertyStates.OK);
-//                updateProperty(gainP);
-//            }
-//        });
-//		blackP.setEventHandler(new NumberEvent() {
-//            @Override
-//            public void processNewValue(Date date, INDINumberElementAndValue[] elementsAndValues) {
-//                setBlack(elementsAndValues[0].getValue().intValue());
-//            }
-//        });
+		gainP.setEventHandler(new NumberEvent() {
+            @Override
+            public void processNewValue(Date date, INDINumberElementAndValue[] elementsAndValues) {
+                try{
+                	setGain(elementsAndValues[0].getValue().intValue());
+                }catch(IllegalArgumentException e){
+                	gainP.setState(PropertyStates.ALERT);
+                	updateProperty(gainP, e.getMessage());
+                }catch(LibUsbException e){
+                	gainP.setState(PropertyStates.ALERT);
+                	updateProperty(gainP, e.getMessage());
+                }
+                gainE.setValue(elementsAndValues[0].getValue());
+                gainP.setState(PropertyStates.OK);
+                updateProperty(gainP);
+            }
+        });
+		blackP.setEventHandler(new NumberEvent() {
+            @Override
+            public void processNewValue(Date date, INDINumberElementAndValue[] elementsAndValues) {
+                setBlack(elementsAndValues[0].getValue().intValue());
+            }
+        });
 		
 		
 		// starting libusb and the associated thread
@@ -176,11 +177,11 @@ public class INDIPlamDriver extends INDICCDDriver implements INDIConnectionHandl
 		if(!ready()){
 			return false;
 		}
-		
+		captureOngoing = true;
 		raw = new byte[IMG_BYTE_SIZE];
 
-		requestTransfer(IMG_PACKET_MAXSIZE, IMG_TIMEOUT);	
-		captureOngoing = true;
+		//requestTransfer(IMG_PACKET_MAXSIZE, IMG_TIMEOUT);	
+		
 
 		
 		if(duration>0){
@@ -342,8 +343,8 @@ public class INDIPlamDriver extends INDICCDDriver implements INDIConnectionHandl
         }
         	
         super.driverConnect(timestamp);
-        //this.addProperty(gainP);
-        //this.addProperty(blackP);
+        this.addProperty(gainP);
+        this.addProperty(blackP);
         
     }
 
@@ -351,7 +352,8 @@ public class INDIPlamDriver extends INDICCDDriver implements INDIConnectionHandl
     public void driverDisconnect(Date timestamp) throws INDIException {
     	disconnect();
     	super.driverDisconnect(timestamp);
-        
+        this.removeProperty(gainP);
+        this.removeProperty(blackP);
     }
     
     /**
@@ -643,7 +645,7 @@ public class INDIPlamDriver extends INDICCDDriver implements INDIConnectionHandl
         if(transfer.actualLength()==IMG_BYTE_SIZE){        
 
         	transfer.buffer().get(raw, 0, Math.min(transfer.actualLength(),IMG_BYTE_SIZE));
-        	LibUsb.freeTransfer(transfer);
+        	
 
 	        captureOngoing = false;
         	LOG.info("Image received");
@@ -662,10 +664,11 @@ public class INDIPlamDriver extends INDICCDDriver implements INDIConnectionHandl
         	
         	    		
         }else if(captureOngoing){
+        	LOG.debug("retry request transfer, size was " + transfer.actualLength());
         	requestTransfer(IMG_PACKET_MAXSIZE, IMG_TIMEOUT);
         }
         
-        
+        LibUsb.freeTransfer(transfer);
 
 
 	}
