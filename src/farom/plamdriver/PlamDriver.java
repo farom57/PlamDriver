@@ -154,9 +154,10 @@ public class PlamDriver implements TransferCallback {
 			throw new LibUsbException("Unable to claim interface", result);
 
 		System.out.println("Connection established");
-		connected = true;
 
 		init();
+		
+		connected = true;
 
 	}
 
@@ -507,11 +508,7 @@ public class PlamDriver implements TransferCallback {
         System.out.println("Bulk transfer: "+transfer.actualLength()+"/"+transfer.length()+" status: " + LibUsb.errorName(transfer.status()));
         
         
-//        if(transfer.actualLength()==0){
-//        	captureOngoing = false;
-//        	System.out.println("Error: 0 byte, "+LibUsb.errorName(transfer.status())+" "+offset+"/"+IMG_BYTE_SIZE);
-//        	return;
-//        }
+
         if(transfer.actualLength()==IMG_BYTE_SIZE){        
 	        transfer.buffer().get(raw, offset, Math.min(transfer.actualLength(),IMG_BYTE_SIZE-offset));
 	        offset += Math.min(transfer.actualLength(),IMG_BYTE_SIZE-offset);
