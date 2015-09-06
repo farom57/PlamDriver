@@ -134,7 +134,18 @@ public class INDIPlamDriver extends INDICCDDriver implements INDIConnectionHandl
 		blackP.setEventHandler(new NumberEvent() {
             @Override
             public void processNewValue(Date date, INDINumberElementAndValue[] elementsAndValues) {
-                setBlack(elementsAndValues[0].getValue().intValue());
+                try{
+                	setBlack(elementsAndValues[0].getValue().intValue());
+                }catch(IllegalArgumentException e){
+                	blackP.setState(PropertyStates.ALERT);
+                	updateProperty(gainP, e.getMessage());
+                }catch(LibUsbException e){
+                	blackP.setState(PropertyStates.ALERT);
+                	updateProperty(gainP, e.getMessage());
+                }
+                blackE.setValue(elementsAndValues[0].getValue());
+                blackP.setState(PropertyStates.OK);
+                updateProperty(blackP);
             }
         });
 		
@@ -656,7 +667,7 @@ public class INDIPlamDriver extends INDICCDDriver implements INDIConnectionHandl
     		primaryCCD.setFrameBuffer(image);
     		
     		PixelIterator it = image.iteratePixel();
-    		for(int i = 0; i<SIZE_X*SIZE_Y; i++){
+    		for(int i = SIZE_X*SIZE_Y-1; i>=0; i--){ // Backward counting to rotate the image
     			int pixelValue = (raw[i*2]&0xFF)*256 + (raw[i*2+1]&0xFF);
     			it.setPixel(pixelValue);
     		}
